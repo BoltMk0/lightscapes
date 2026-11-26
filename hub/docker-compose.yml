@@ -3,7 +3,6 @@
 services:
   mosquitto:
     image: eclipse-mosquitto:2
-    restart: unless-stopped
     # Loaded from /etc/mosquitto, where it's allowed by the AppArmor profile Ubuntu has for Mosquitto, which also
     # applies to this one's under rootless Docker
     command: mosquitto -c /etc/mosquitto/mosquitto.conf
@@ -24,7 +23,6 @@ services:
 
   zigbee2mqtt:
     image: koenkk/zigbee2mqtt:2
-    restart: unless-stopped
     depends_on:
       - mosquitto
     devices:
@@ -48,7 +46,6 @@ services:
       context: ..
       dockerfile: hub/Dockerfile
     image: lightscapes-hub
-    restart: unless-stopped
     depends_on:
       - mosquitto
     volumes:
