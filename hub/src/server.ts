@@ -2,18 +2,10 @@ import { createServer, type IncomingMessage, type ServerResponse } from "node:ht
 import { readFile } from "node:fs/promises";
 import { join, normalize } from "node:path";
 import { timingSafeEqual } from "node:crypto";
-import { isTimeOfDay } from "../../src/lib/model/client/types.ts";
-import { BELL_EVENTS, ConfigError, normalizeConfig, saveConfig, type BellEvent, type Config } from "./config.ts";
-import { clockmakerRequest, type ClockFollower } from "./clock.ts";
-import type { Engine } from "./engine.ts";
-import type { Zigbee } from "./zigbee.ts";
-import { townSquareSpectrum } from "./spectrum.ts";
 import { ENV } from "./env.ts";
+import type { Hub } from "./hub.ts";
 
-const MAX_BODY_BYTES = 1024 * 1024;
-const LEARN_TIMEOUT_MS = 30_000;
-/** The lengths a spectrum can be played through over, in seconds, as the page offers them. */
-const PLAY_SECONDS = [10, 20, 30, 60];
+const MAX_BODY_BYTES = 64 * 1024;
 
 const CONTENT_TYPES: Record<string, string> = {
     '.html': 'text/html; charset=utf-8',
@@ -31,7 +23,7 @@ function send(res: ServerResponse, status: number, body: unknown) {
     res.end(JSON.stringify(body));
 }
 
-async function readJson(req: IncomingMessage): Promise<unknown> {
+async function readJson(req: IncomingMessage): Promise<Record<string, unknown>> {
     let size = 0;
     const chunks: Buffer[] = [];
     for await (const chunk of req){
@@ -39,9 +31,10 @@ async function readJson(req: IncomingMessage): Promise<unknown> {
         if(size > MAX_BODY_BYTES) throw new HttpError(413, 'Too large');
         chunks.push(chunk);
     }
-    if(size === 0) return {};
     try {
-        return JSON.parse(Buffer.concat(chunks).toString('utf8'));
+        const value = size === 0 ? {} : JSON.parse(Buffer.concat(chunks).toString('utf8'));
+        if(typeof value !== 'object' || value === null) throw new Error();
+        return value;
     } catch {
         throw new HttpError(400, 'Not JSON');
     }
@@ -58,96 +51,29 @@ function authorized(req: IncomingMessage): boolean {
     return given.length === expected.length && timingSafeEqual(given, expected);
 }
 
-/** The configuration for the page: the token's left out, only whether there is one. */
-function publicConfig(config: Config) {
-    return { ...config, clockmaker: { ...config.clockmaker, token: '', tokenSet: config.clockmaker.token !== '' } };
-}
-
-export function startServer(engine: Engine, clock: ClockFollower, zigbee: Zigbee) {
+/** The hub's own page: where it connects, and what it has. */
+export function startServer(hub: Hub) {
     async function api(req: IncomingMessage, res: ServerResponse, path: string) {
         const method = req.method ?? 'GET';
 
-        if(path === '/api/status' && method === 'GET'){
-            const c = clock.clock;
-            return send(res, 200, {
-                clockmaker: { connection: clock.connection, error: clock.error },
-                mqtt: { connected: zigbee.mqttConnected, url: ENV.mqttUrl },
-                zigbee2mqtt: { online: zigbee.bridgeOnline },
-                dryRun: ENV.dryRun,
-                clock: c && {
-                    timeOfDay: c.timeOfDay,
-                    day: c.day,
-                    running: c.time.serverStartTime !== null,
-                    progress: engine.progress()
-                },
-                overridden: engine.overridden,
-                previewing: engine.previewing,
-                playing: engine.playing,
-                activity: engine.activity
-            });
+        if(path === '/api/status' && method === 'GET') return send(res, 200, hub.status());
+
+        if(path === '/api/lights' && method === 'GET') return send(res, 200, hub.lights());
+
+        if(path === '/api/settings' && method === 'PUT'){
+            const body = await readJson(req);
+            const url = typeof body.url === 'string' ? body.url.trim().replace(/\/+$/, '') : '';
+            const name = typeof body.name === 'string' ? body.name.trim() : '';
+            if(url && !/^https?:\/\/[^/]+/.test(url)) throw new HttpError(400, 'The address should start with http:// or https://');
+            if(!name) throw new HttpError(400, 'Give the hub a name');
+            if(name.length > 60) throw new HttpError(400, 'Keep the name to 60 characters');
+            hub.updateSettings(url, name);
+            return send(res, 200, hub.status());
         }
 
-        if(path === '/api/config' && method === 'GET') return send(res, 200, publicConfig(engine.config));
-
-        if(path === '/api/config' && method === 'PUT'){
-            const body = await readJson(req) as { clockmaker?: { token?: string } };
-            // The page never has the token, so a blank one keeps the saved one
-            if(body?.clockmaker && !body.clockmaker.token) body.clockmaker.token = engine.config.clockmaker.token;
-            const config = normalizeConfig(body);
-            saveConfig(config);
-            engine.configure(config);
-            return send(res, 200, publicConfig(config));
-        }
-
-        if(path === '/api/zigbee' && method === 'GET'){
-            return send(res, 200, { devices: zigbee.devices, groups: zigbee.groups });
-        }
-
-        // The games on a Clockmaker, to pick one from: with the URL and token typed in, or the saved ones
-        if(path === '/api/clocks' && method === 'POST'){
-            const body = await readJson(req) as { url?: string; token?: string };
-            const url = (body.url || engine.config.clockmaker.url).replace(/\/+$/, '');
-            const token = body.token || engine.config.clockmaker.token;
-            if(!url || !token) throw new HttpError(400, 'Enter the Clockmaker address and API token first');
-            try {
-                const response = await clockmakerRequest(url, token, '/api/clock');
-                const { instances } = await response.json() as { instances: { clock: { clockId: string }; config: { teamName: string | null } }[] };
-                return send(res, 200, instances.map(i => ({ id: i.clock.clockId, name: i.config.teamName })));
-            } catch(err) {
-                const message = err instanceof Error ? (err.name === 'TimeoutError' ? 'Timed out' : err.message) : String(err);
-                throw new HttpError(502, `Couldn't reach Clockmaker: ${message}`);
-            }
-        }
-
-        if(path === '/api/townsquare-spectrum' && method === 'GET') return send(res, 200, townSquareSpectrum());
-
-        if(path === '/api/learn' && method === 'POST'){
-            const press = await engine.learn(LEARN_TIMEOUT_MS);
-            return send(res, 200, press);
-        }
-
-        if(path === '/api/preview' && method === 'POST'){
-            if(engine.overridden) throw new HttpError(409, "The lights are overridden from the remote");
-            const body = await readJson(req) as { phase?: unknown; progress?: unknown; bell?: unknown; play?: unknown; seconds?: unknown; config?: unknown };
-            // The page's unsaved configuration, if it sent it
-            const config = body.config === undefined ? engine.config : normalizeConfig(body.config);
-            if(isTimeOfDay(body.phase)){
-                const progress = typeof body.progress === 'number' ? Math.min(Math.max(body.progress, 0), 1) : 0;
-                engine.preview(body.phase, progress, config);
-            } else if(BELL_EVENTS.includes(body.bell as BellEvent)){
-                engine.previewBell(body.bell as BellEvent, config);
-            } else if(typeof body.play === 'string'){
-                const spectrum = config.spectrums.find(s => s.id === body.play);
-                if(!spectrum) throw new HttpError(400, 'No such spectrum');
-                if(!PLAY_SECONDS.includes(body.seconds as number)) throw new HttpError(400, `Play it over ${PLAY_SECONDS.join(', ')} seconds`);
-                engine.playSpectrum(spectrum, body.seconds as number, config);
-            } else throw new HttpError(400, 'Preview a phase, a bell or a spectrum');
-            return send(res, 200, {});
-        }
-
-        if(path === '/api/preview' && method === 'DELETE'){
-            engine.endPreview();
-            return send(res, 200, {});
+        if(path === '/api/retry' && method === 'POST'){
+            hub.askAgain();
+            return send(res, 200, hub.status());
         }
 
         throw new HttpError(404, 'Not found');
@@ -181,13 +107,12 @@ export function startServer(engine: Engine, clock: ClockFollower, zigbee: Zigbee
         } catch(err) {
             if(res.headersSent) return;
             if(err instanceof HttpError) send(res, err.status, { error: err.message });
-            else if(err instanceof ConfigError) send(res, 400, { error: err.message });
             else {
                 console.error(err);
                 send(res, 500, { error: 'Something went wrong' });
             }
         }
     });
-    server.listen(ENV.port, () => console.log(`Lightscapes: configuration page on port ${ENV.port}`));
+    server.listen(ENV.port, () => console.log(`Lightscapes: hub page on port ${ENV.port}`));
     return server;
 }

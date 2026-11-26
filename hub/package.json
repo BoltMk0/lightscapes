@@ -1,14 +1,15 @@
 {
-	"name": "lightscapes",
+	"name": "lightscapes-hub",
 	"private": true,
-	"version": "0.1.0",
-	"description": "Zigbee lighting for Clockmaker: follows a game's phases and turns Zigbee buttons into a clock remote",
+	"version": "2.0.0",
+	"description": "Lightscapes hub: drives Zigbee lights and reads Zigbee buttons for the app it connects to (such as Clockmaker)",
 	"type": "module",
 	"scripts": {
 		"build": "esbuild src/main.ts --bundle --platform=node --format=esm --target=node22 --packages=external --outfile=dist/main.js",
 		"start": "node dist/main.js",
-		"dev": "npm run build && DRY_RUN=1 LIGHTSCAPES_DATA_DIR=./data/lightscapes node dist/main.js",
-		"check": "tsc --noEmit"
+		"dev": "npm run build && DRY_RUN=1 LIGHTSCAPES_DATA_DIR=./data node dist/main.js",
+		"check": "tsc --noEmit",
+		"test": "node --test \"src/**/*.test.ts\""
 	},
 	"engines": {
 		"node": ">=22"

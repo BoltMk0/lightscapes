@@ -1,4 +1,4 @@
-# Lightscapes, with Zigbee2MQTT and the MQTT broker they talk through, for the computer by the game (e.g. a Raspberry Pi).
+# The Lightscapes hub, with Zigbee2MQTT and the MQTT broker they talk through, for the computer by the lights (e.g. a Raspberry Pi).
 # Set up as in README.md, then from this folder: docker compose up -d --build
 services:
   mosquitto:
@@ -44,10 +44,10 @@ services:
 
   lightscapes:
     build:
-      # The repository root: Lightscapes shares some of Clockmaker's source
+      # The repository root: the hub is built with the library there
       context: ..
-      dockerfile: lightscapes/Dockerfile
-    image: lightscapes
+      dockerfile: hub/Dockerfile
+    image: lightscapes-hub
     restart: unless-stopped
     depends_on:
       - mosquitto
@@ -59,6 +59,6 @@ services:
       - TZ=${TZ:-UTC}
     ports:
       - ${BIND_ADDRESS:-0.0.0.0}:8090:8090
-    # If Clockmaker's address is a Tailscale MagicDNS name the container can't resolve, use Tailscale's resolver:
+    # If the app's address is a Tailscale MagicDNS name the container can't resolve, use Tailscale's resolver:
     # dns:
     #   - 100.100.100.100

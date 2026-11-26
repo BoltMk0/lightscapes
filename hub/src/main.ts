@@ -1,20 +1,24 @@
-import { loadConfig } from "./config.ts";
-import { ClockFollower } from "./clock.ts";
-import { Zigbee } from "./zigbee.ts";
-import { Engine } from "./engine.ts";
+import { Zigbee2Mqtt } from "./adapters/zigbee2mqtt.ts";
+import { Hub } from "./hub.ts";
 import { startServer } from "./server.ts";
 import { ENV } from "./env.ts";
+import pkg from "../package.json" with { type: "json" };
 
 if(ENV.dryRun) console.log('Dry run: the lights are logged, not set');
 
-const zigbee = new Zigbee();
-const clock = new ClockFollower();
-const engine = new Engine(loadConfig(), clock, zigbee);
-const server = startServer(engine, clock, zigbee);
+const hub = new Hub(pkg.version, [
+    new Zigbee2Mqtt({
+        url: ENV.mqttUrl,
+        username: ENV.mqttUsername,
+        password: ENV.mqttPassword,
+        baseTopic: ENV.baseTopic,
+        dryRun: ENV.dryRun
+    })
+]);
+const server = startServer(hub);
 
 function shutdown() {
-    clock.stop();
-    zigbee.close();
+    hub.stop();
     server.close(() => process.exit(0));
     setTimeout(() => process.exit(0), 2000).unref();
 }

@@ -9,10 +9,10 @@
 		"skipLibCheck": true,
 		"noEmit": true,
 		"allowImportingTsExtensions": true,
-		// For the colour maths the page shares (public/whites.js)
-		"allowJs": true,
+		"resolveJsonModule": true,
 		"forceConsistentCasingInFileNames": true
 	},
-	// Also type-checks the few Clockmaker files Lightscapes shares (the clock model and the town square's sky)
-	"include": ["src/**/*.ts"]
+	// Also type-checks the library it's built with, from the repository root
+	"include": ["src/**/*.ts", "../src/**/*.ts"],
+	"exclude": ["../src/**/*.test.ts"]
 }

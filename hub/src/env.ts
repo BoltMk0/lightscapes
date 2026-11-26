@@ -1,6 +1,6 @@
 import { resolve } from "node:path";
 
-/** Settings for where Lightscapes runs, from the environment. Everything about the lights is in the configuration. */
+/** Settings for where the hub runs, from the environment. The app it connects to is set on its page. */
 export const ENV = {
     /** The port the configuration page is served on. */
     port: Number(process.env.PORT ?? 8090),
