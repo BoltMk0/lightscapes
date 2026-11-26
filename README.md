@@ -1,118 +1,72 @@
 # Lightscapes
 
-Zigbee lighting for Clockmaker. Lightscapes follows one game's day cycle and sets your Zigbee lights to match:
+Lighting that follows an app. A **hub**, on a small computer next to the lights, drives them; the **app** it connects
+to (such as Clockmaker) tells it what to show. This repository has both halves:
 
-- a **scene** for each phase (morning, day, dusk and night)
-- **spectrums**, which lights can follow to fade through colours (like the town square's sky) as the countdown runs, each a white (a colour temperature, on the bulbs' white light) or a colour
-- **flashes** when the bells ring
+- **[`hub/`](hub/README.md):** the hub, with Zigbee2MQTT as its first adapter. Installing it is covered there.
+- **The library** (this folder), `@boltmk0/lightscapes`, which apps and the hub share:
+  - `@boltmk0/lightscapes/protocol`: the messages between a hub and its app, checked at runtime.
+  - `@boltmk0/lightscapes/controller`: the app's side of the connection. Hubs ask to connect and are approved, then
+    each is sent what to show over an event stream, and posts its lights, their states and button presses back.
+  - `@boltmk0/lightscapes/color`: whites (in kelvin) and colours, and how lights fade along a timeline.
 
-It also turns Zigbee buttons into a clock remote.
+## How it works
 
-It runs on a small computer near the game, such as a Raspberry Pi, next to [Zigbee2MQTT](https://www.zigbee2mqtt.io/)
-(which drives the Zigbee USB adapter) and the Mosquitto MQTT broker the two talk through. The computer only connects
-*out*, to Clockmaker, so it works on any network. With Tailscale on it, Clockmaker can stay on your tailnet.
+The app sends a hub a **program** (named scenes, and timelines of colours to fade through) and a stack of **layers**:
+each a scene, with a priority and optionally a clock that moves its timelines along. For each light, the
+highest-priority layer that names it wins; lights no layer names are left as they are. **Cues** are layers that flash
+for a moment (fading in, holding, and fading back), now or at a time the app gives. The hub does the fading and timing
+itself, so the app only sends something when it changes.
 
+Values are generic: brightness 0–1, whites in kelvin, and lights named by their adapter, like `z2m:Hall`. Each adapter
+says what its lights can do, and the hub shows the nearest a light can of what it's asked.
+
+The hub connects out to the app's address with `POST <address>/connect`, which answers with an event stream, and
+posts back to `<address>/messages`, both with `Authorization: Bearer <hub id>.<secret>`.
+
+## Using the library
+
+It's installed from this repository by tag, not from npm:
+
+```sh
+npm install github:BoltMk0/lightscapes#semver:^1.0.0
 ```
- Zigbee adapter ── Zigbee2MQTT ── Mosquitto ── Lightscapes ──(Tailscale)──▶ Clockmaker
-                     :8080                        :8090
+
+npm 12 only fetches git dependencies when told to, and builds this one when it's installed. In the app's `.npmrc`:
+
+```ini
+allow-git=root
 ```
 
-The user guide is [doc/lightscapes.md](../doc/lightscapes.md). This page covers installing it.
+An app hands the controller its two routes. For example, with SvelteKit:
 
-## Setting up
+```ts
+// src/routes/lightscapes/connect/+server.ts
+export const POST = ({ request }) => controller.handleConnect(request);
+// src/routes/lightscapes/messages/+server.ts
+export const POST = ({ request }) => controller.handleMessages(request);
+```
 
-You'll need Docker with Compose, a Zigbee USB adapter Zigbee2MQTT supports, and a clone of this repository. The image is
-built from the repository root, because Lightscapes shares some of Clockmaker's source.
+and makes it with a store for the hubs and what to send each one:
 
-1. **Give Clockmaker an API token.** In Clockmaker, open *Settings → API Token* and click **Create token**. Copy the
-   token now: it's only shown once.
+```ts
+import { LightscapesController } from '@boltmk0/lightscapes/controller';
 
-2. **Find the adapter** by its stable path:
-
-   ```sh
-   ls -l /dev/serial/by-id/
-   ```
-
-3. **Configure**, from this folder:
-
-   ```sh
-   cp .env.example .env            # then set ZIGBEE_ADAPTER (and the rest, if you like)
-   mkdir -p data/zigbee2mqtt
-   cp zigbee2mqtt/configuration.yaml data/zigbee2mqtt/
-   ```
-
-   If Zigbee2MQTT can't tell which adapter you have, uncomment its `adapter:` line in
-   `data/zigbee2mqtt/configuration.yaml`.
-
-4. **Start it:**
-
-   ```sh
-   docker compose up -d --build
-   ```
-
-5. **Pair your lights and buttons** in Zigbee2MQTT's page, `http://<this computer>:8080`:
-   - Click *Permit join*, then put each device into pairing mode.
-   - Give each one a name you'll recognise, like `table-lamp` or `st-button`.
-   - For lights that should change together, make a *group*: it changes them all with one message, so they stay
-     in step.
-
-6. **Set up Lightscapes** in its page, `http://<this computer>:8090`:
-   - In **Settings**, enter Clockmaker's address (as this computer reaches it, e.g. `http://homelab:3000`) and the token.
-   - Click **Find games** and pick the game, then save.
-   - Set the scenes, spectrums, bells and buttons.
-
-From then on, Lightscapes starts with the computer and sets the lights to the game's phase as soon as it connects.
-
-## Settings
-
-| `.env` | |
-| --- | --- |
-| `ZIGBEE_ADAPTER` | The adapter's `/dev/serial/by-id/...` path. |
-| `LIGHTSCAPES_PASSWORD` | Asked for by the Lightscapes page (any user name). Empty for none. |
-| `BIND_ADDRESS` | The address both pages listen on. Use this computer's Tailscale address (`tailscale ip -4`) to keep them off the venue's network. Docker can't start the containers until that address exists, so Tailscale must be up first. |
-| `TZ` | The time zone, for the logs. |
-
-Lightscapes itself also reads `MQTT_URL`, `MQTT_USERNAME`, `MQTT_PASSWORD` and `Z2M_BASE_TOPIC` (`zigbee2mqtt` by
-default), and `DRY_RUN=1`, which logs what it would send to the lights instead of sending it. Its configuration is
-kept in `data/lightscapes/lightscapes.json`.
-
-## Security
-
-Mosquitto has no logins and publishes no ports, so only Zigbee2MQTT and Lightscapes can reach it, over Compose's own
-network.
-
-The two pages listen on every network by default:
-- Set `LIGHTSCAPES_PASSWORD` to protect the Lightscapes page.
-- Set `BIND_ADDRESS` to keep both pages to your tailnet.
-- Zigbee2MQTT's page has its own `frontend.auth_token` option, to ask for a password.
-
-## Troubleshooting
-
-- **Clockmaker: "The API token was refused".** The token was replaced or revoked in Clockmaker. Create a new one and
-  enter it in Lightscapes.
-- **Clockmaker can't be reached by its Tailscale name.** The container may not resolve MagicDNS names. Use the
-  Tailscale IP address instead, or uncomment the `dns:` lines in `docker-compose.yml`.
-- **Zigbee2MQTT: offline.** Check `docker compose logs zigbee2mqtt`. It's usually the adapter path, or the adapter type.
-- **Rootless Docker** (Docker run as your own user) can only pass the adapter through if your user can open it. The
-  adapter belongs to `root:dialout` by default. A udev rule giving it to your user fixes that; use the `serial` from
-  `udevadm info -a -n /dev/ttyUSB0`, then unplug and replug the adapter:
-
-  ```sh
-  echo 'SUBSYSTEM=="tty", ATTRS{serial}=="<serial>", OWNER="<your user>"' | sudo tee /etc/udev/rules.d/99-zigbee-adapter.rules
-  sudo udevadm control --reload
-  ```
-- **A light ignores colours.** Some bulbs only do white, or only do brightness. The page warns when a light doesn't
-  say it can do what's asked.
+const controller = new LightscapesController({
+    store: { load: () => readHubs(), save: hubs => writeHubs(hubs) },
+    assignmentFor: hubId => ({ following: null, program: { scenes: {}, timelines: {}, fadeSeconds: 2 }, layers: [] })
+});
+controller.on('change', hubId => { /* a hub asked to connect, came online or went offline */ });
+controller.on('input', (hubId, input) => { /* a button was pressed */ });
+```
 
 ## Developing
 
 ```sh
 npm install
-npm run check     # type-checks, along with the Clockmaker files it shares
-docker compose up -d mosquitto-dev   # an MQTT broker on localhost:1883, without Zigbee2MQTT or the adapter
-npm run dev       # builds, then runs on :8090 with DRY_RUN, against the broker on localhost:1883
+npm run check
+npm test
+npm run build     # dist/, as apps install it
 ```
 
-- **Clockmaker:** point it at a Clockmaker dev server (`npm run dev` in the repository root) with an API token.
-- **Testing without Zigbee hardware:** publish Zigbee2MQTT's topics to the broker yourself, e.g. a retained
-  `zigbee2mqtt/bridge/devices` list, and `{"action":"single"}` on a button's topic.
+Releases are tagged `vX.Y.Z`; apps follow a semver range of the tags.
