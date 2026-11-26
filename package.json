@@ -1,0 +1,38 @@
+{
+	"name": "@boltmk0/lightscapes",
+	"version": "1.0.0",
+	"description": "Lightscapes' shared library: the protocol between a lighting hub and the apps that drive it, colour maths, and the app side of the connection",
+	"private": true,
+	"type": "module",
+	"license": "UNLICENSED",
+	"exports": {
+		"./protocol": {
+			"types": "./dist/protocol/index.d.ts",
+			"default": "./dist/protocol/index.js"
+		},
+		"./color": {
+			"types": "./dist/color/index.d.ts",
+			"default": "./dist/color/index.js"
+		},
+		"./controller": {
+			"types": "./dist/controller/index.d.ts",
+			"default": "./dist/controller/index.js"
+		}
+	},
+	"files": [
+		"dist"
+	],
+	"scripts": {
+		"build": "rm -rf dist && tsc -p tsconfig.build.json",
+		"prepare": "npm run build",
+		"check": "tsc --noEmit",
+		"test": "node --test \"src/**/*.test.ts\""
+	},
+	"engines": {
+		"node": ">=22.18"
+	},
+	"devDependencies": {
+		"@types/node": "^22.20.5",
+		"typescript": "^5.9.3"
+	}
+}

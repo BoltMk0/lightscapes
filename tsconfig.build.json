@@ -1,0 +1,11 @@
+{
+	// The library as apps install it: built to dist/ with its type declarations, leaving out the tests
+	"extends": "./tsconfig.json",
+	"compilerOptions": {
+		"noEmit": false,
+		"declaration": true,
+		"outDir": "dist",
+		"rootDir": "src"
+	},
+	"exclude": ["src/**/*.test.ts"]
+}
